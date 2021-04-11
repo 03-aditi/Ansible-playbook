@@ -1,0 +1,66 @@
+--- # Playbook to automate deployment of website
+- hosts: localhost
+  user: ansible
+  become: yes
+  connection: ssh
+  tasks:
+          - name: "Install services"
+            yum: name='{{item}}' state=installed
+            loop:
+                    - firewalld
+                    - mariadb-server
+                    - httpd
+                    - php
+                    - git
+          - name: "Restart service firewalld"
+            service: name=firewalld state=restarted
+          - name: "Restart service mariadb"
+            service: name=mariadb state=restarted
+          - name: "Start httpd"
+            service: name=httpd state=restarted
+          - name: "Configure firewalld ports"
+            ansible.posix.firewalld:
+                    port: '{{item}}'
+                    permanent: yes
+                    state: enabled
+                    immediate: true
+            loop:
+                    - 3306/tcp
+                    - 80/tcp
+          - name: "Reload service firewalld"
+            systemd: name=firewalld state=reloaded
+          - name: "Configure db"
+            command: mysql
+          - name: "Create new db"
+            community.mysql.mysql_db:
+                     login_user: root
+                     login_password: ''
+                     name: ecomdb
+                     state: present  
+          - name: "Create user"
+            community.mysql.mysql_user: 
+                name: ecomuser
+                host: localhost
+                password: ecompassword
+                priv: '*.*:ALL,GRANT'
+                state: present
+          - name: "Write script"
+            copy:
+                    dest: "db-load-script.sql"
+                    content: |
+                            USE ecomdb;
+                            CREATE TABLE products (id mediumint(8) unsigned NOT NULL auto_increment,Name varchar(255) default NULL,Price varchar(255) default NULL, ImageUrl varchar(255) default NULL,PRIMARY KEY (id)) AUTO_INCREMENT=1;
+                            INSERT INTO products (Name,Price,ImageUrl) VALUES ("Laptop","100","c-1.png"),("Drone","200","c-2.png"),("VR","300","c-3.png"),("Tablet","50","c-5.png"),("Watch","90","c-6.png"),("Phone Covers","20","c-7.png"),("Phone","80","c-8.png"),("Laptop","150","c-4.png");
+          - name: "Run script"
+            community.mysql.mysql_db:
+                    name: ecomdb
+                    state: import
+                    target: db-load-script.sql
+          - name: "Configure httpd"
+            command: sed -i 's/index.html/index.php/g' /etc/httpd/conf/httpd.conf
+          - name: "Download Code"
+            command: git clone https://github.com/kodekloudhub/learning-app-ecommerce.git /var/www/html/
+          - name: "Update index.php"
+            command: sed -i 's/172.20.1.101/localhost/g' /var/www/html/index.php
+          - name: "Test the connection"
+            command: curl http://localhost
